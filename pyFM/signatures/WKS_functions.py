@@ -93,7 +93,7 @@ def auto_WKS(evals, evects, num_E, landmarks=None, scaled=True):
     """
     abs_ev = sorted(np.abs(evals))
 
-    e_min,e_max = np.log(abs_ev[1]),np.log(abs_ev[-1])
+    e_min,e_max = np.log(abs_ev[0]),np.log(abs_ev[-1])
     sigma = 7*(e_max-e_min)/num_E
 
     e_min += 2*sigma

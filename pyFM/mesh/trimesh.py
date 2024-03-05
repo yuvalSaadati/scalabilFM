@@ -11,7 +11,8 @@ import scipy.sparse as sparse
 
 import potpourri3d as pp3d
 import robust_laplacian
-
+import torch
+from spectralnet import SpectralReduction
 
 class TriMesh:
     """
@@ -366,12 +367,66 @@ class TriMesh:
                 start_time = time.time()
             self.eigenvalues, self.eigenvectors = laplacian.laplacian_spectrum(self.W, self.A,
                                                                                spectrum_size=k)
+            
+            x = torch.tensor(self.vertlist)
+            x = x.float()
+
+            spectralreduction = SpectralReduction(
+                n_components=k,
+                should_use_ae=False,
+                should_use_siamese=False,
+                spectral_epochs=10,
+                spectral_hiddens=[128, 128, k],
+            )
+
+            spectralnetEigenvectors = spectralreduction.fit_transform(x)
+
+            laplacian_eigenxvalues, laplacian_eigenvectors = laplacian.laplacian_spectrum(self.W, self.A, spectrum_size=k)
+
+            normalized_laplacian_eigenvectors= self.normalize_eigenvectors(laplacian_eigenvectors)
+            normalized_spectralreduction_eigenvectors = self.normalize_eigenvectors(spectralnetEigenvectors)
+
+            grassmann = self.get_grassman_distance(normalized_laplacian_eigenvectors, normalized_spectralreduction_eigenvectors)
+
+            print("grassmann: "+ str(grassmann))
+            
+            batch_raw, batch_encoded = spectralreduction._spectralnet.get_random_batch()
+            L_batch = spectralreduction._get_laplacian_of_small_batch(batch_encoded)
+            V_batch = spectralreduction._predict(batch_raw)
+            self.eigenvalues = np.diag(V_batch.T @ L_batch @ V_batch)
+            self.eigenvectors = normalized_spectralreduction_eigenvectors
+            # similarity = self.cosine_similarity(laplacian_eigenxvalues, self.eigenvalues)
+            # angle = np.arccos(similarity)
+            # print(f"angle: {angle}")
 
             if verbose:
                 print(f"\tDone in {time.time()-start_time:.2f} s")
 
             if return_spectrum:
                 return self.eigenvalues, self.eigenvectors
+            
+    def normalize_eigenvectors(self, eigenvectors):
+        """
+        Normalize a set of eigenvectors.
+
+        Parameters:
+        eigenvectors (numpy.ndarray): Array containing eigenvectors as columns.
+
+        Returns:
+        numpy.ndarray: Normalized eigenvectors.
+        """
+        # Compute the norms of each eigenvector
+        norms = np.linalg.norm(eigenvectors, axis=0)
+        
+        # Ensure norms are not zero to avoid division by zero
+        nonzero_norms = np.where(norms != 0)
+        
+        # Normalize eigenvectors by dividing by norms
+        normalized_eigenvectors = np.divide(eigenvectors, norms, where=nonzero_norms)
+        
+        return normalized_eigenvectors
+        return np.array([v / np.linalg.norm(v) for v in eigenvectors.T]).T
+
 
     def process(self, k=200, skip_normals=True, intrinsic=False, robust=False, verbose=False):
         """
@@ -1006,3 +1061,26 @@ class TriMesh:
         self._solver_geod = None
         self._solver_heat = None
         self._solver_lap = None
+
+    def get_grassman_distance(self, A: np.ndarray, B: np.ndarray) -> float:
+        """
+        Computes the Grassmann distance between the subspaces spanned by the columns of A and B.
+
+        Parameters
+        ----------
+        A : np.ndarray
+            Numpy ndarray.
+        B : np.ndarray
+            Numpy ndarray.
+
+        Returns
+        -------
+        float
+            The Grassmann distance.
+        """
+
+        M = np.dot(np.transpose(A), B)
+        _, s, _ = np.linalg.svd(M, full_matrices=False)
+        s = 1 - np.square(s)
+        grassmann = np.sum(s)
+        return grassmann

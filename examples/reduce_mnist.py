@@ -20,7 +20,7 @@ def main():
         n_components=3,
         should_use_ae=True,
         should_use_siamese=True,
-        spectral_hiddens=[128, 128, 3],
+        spectral_hiddens=[512, 512, 2048, 3],
     )
 
     X_new = spectralreduction.fit_transform(X)

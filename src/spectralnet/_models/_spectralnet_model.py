@@ -5,7 +5,6 @@ import torch.nn as nn
 
 class SpectralNetModel(nn.Module):
     def __init__(self, architecture: dict, input_dim: int):
-        print("init")
         super(SpectralNetModel, self).__init__()
         self.architecture = architecture
         self.layers = nn.ModuleList()
@@ -25,8 +24,6 @@ class SpectralNetModel(nn.Module):
                 current_dim = next_dim
 
     def _make_orthonorm_weights(self, Y: torch.Tensor) -> torch.Tensor:
-        print("_make_orthonorm_weights")
-
         """
         Orthonormalize the output of the network using the Cholesky decomposition.
 
@@ -54,7 +51,6 @@ class SpectralNetModel(nn.Module):
     def forward(
         self, x: torch.Tensor, should_update_orth_weights: bool = True
     ) -> torch.Tensor:
-        
         """
         Perform the forward pass of the model.
 
@@ -76,7 +72,6 @@ class SpectralNetModel(nn.Module):
         If `should_update_orth_weights` is set to True, the orthonormalization weights are updated
         using the QR decomposition. The output tensor is returned.
         """
-        print("forward")
 
         for layer in self.layers:
             x = layer(x)
