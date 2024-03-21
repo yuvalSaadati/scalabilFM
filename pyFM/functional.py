@@ -191,7 +191,7 @@ class FunctionalMapping:
 
         return lmks1, lmks2
 
-    def preprocess(self, n_ev=(50,50), n_descr=100, descr_type='WKS', landmarks=None, subsample_step=1, k_process=None, verbose=False):
+    def preprocess(self, n_ev=(50,50), n_descr=100, descr_type='WKS', landmarks=None, subsample_step=1, k_process=None, verbose=False, is_point_cloud=True,intrinsic=False):
         """
         Saves the information about the Laplacian mesh for opt
 
@@ -214,8 +214,8 @@ class FunctionalMapping:
         # Compute the Laplacian spectrum
         if verbose:
             print('\nComputing Laplacian spectrum')
-        self.mesh1.process(max(self.k1, k_process), verbose=verbose)
-        self.mesh2.process(max(self.k2, k_process), verbose=verbose)
+        self.mesh1.process(max(self.k1, k_process), verbose=verbose, is_point_cloud=is_point_cloud, intrinsic=intrinsic)
+        self.mesh2.process(max(self.k2, k_process), verbose=verbose, is_point_cloud=is_point_cloud, intrinsic=intrinsic)
 
         if verbose:
             print('\nComputing descriptors')

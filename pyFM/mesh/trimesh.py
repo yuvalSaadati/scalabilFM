@@ -12,7 +12,9 @@ import scipy.sparse as sparse
 import potpourri3d as pp3d
 import robust_laplacian
 import torch
-from spectralnet import SpectralReduction
+import sys
+import sys
+from .spectralnet._reduction import SpectralReduction
 
 class TriMesh:
     """
@@ -325,7 +327,7 @@ class TriMesh:
         self.translate(-self.center_mass)
         return self
 
-    def laplacian_spectrum(self, k, intrinsic=False, return_spectrum=True, robust=False, verbose=False):
+    def laplacian_spectrum(self, k, intrinsic=False, return_spectrum=True, robust=False, verbose=False, is_point_cloud=True):
         """
         Compute the Laplace Beltrami Operator and its spectrum.
         Consider using the .process() function for easier use !
@@ -364,10 +366,7 @@ class TriMesh:
         if k > 0:
             if verbose:
                 print(f"Computing {k} eigenvectors")
-                start_time = time.time()
-            self.eigenvalues, self.eigenvectors = laplacian.laplacian_spectrum(self.W, self.A,
-                                                                               spectrum_size=k)
-            
+                start_time = time.time()          
             x = torch.tensor(self.vertlist)
             x = x.float()
 
@@ -375,29 +374,42 @@ class TriMesh:
                 n_components=k,
                 should_use_ae=False,
                 should_use_siamese=False,
-                spectral_epochs=10,
-                spectral_hiddens=[128, 128, k],
+                spectral_epochs=3,
+                spectral_lr=1e-2,
+                spectral_hiddens=[256,256, k],
             )
+            # A_ = np.diag(1.0/np.diag(self.A.toarray()))
+            # W_= self.W.toarray()
+            # S = scipy.sparse.coo_matrix(A_*W_)
+            # laplacian_eigenxvalues, laplacian_eigenvectors = laplacian.laplacian_spectrum(S, None, spectrum_size=15)
 
-            spectralnetEigenvectors = spectralreduction.fit_transform(x)
-
+            # 1: using w with adding padding to y 
+            # spectralnetEigenvectors = spectralreduction.fit_transform(x, None, self.W)
+            #spectralnetEigenvectors = spectralreduction.fit_transform(x, None, torch.tensor(self.facelist), is_point_cloud)
+            #spectralnetEigenvectors = spectralreduction.fit_transform(torch.from_numpy(self.W.toarray()).to(torch.float32), None, torch.tensor(self.facelist), is_point_cloud)
+            # spectralnetEigenvectors = spectralreduction.fit_transform(x, None, torch.tensor(self.facelist), is_point_cloud)
+            #spectralnetEigenvectors = spectralreduction.fit_transform(x , None, torch.tensor(self.facelist), is_point_cloud, torch.from_numpy(self.W.toarray()).to(torch.float32),  torch.from_numpy(self.A.toarray()).to(torch.float32))
             laplacian_eigenxvalues, laplacian_eigenvectors = laplacian.laplacian_spectrum(self.W, self.A, spectrum_size=k)
+            print(f'eigenvalues sum : {laplacian_eigenxvalues.sum()}')
+
+            spectralnetEigenvectors = spectralreduction.fit_transform(x , None, None, is_point_cloud, torch.from_numpy(self.W.toarray()).to(torch.float32),  torch.from_numpy(self.A.toarray()).to(torch.float32))
+            print(spectralnetEigenvectors.T @ spectralnetEigenvectors)
+
 
             normalized_laplacian_eigenvectors= self.normalize_eigenvectors(laplacian_eigenvectors)
             normalized_spectralreduction_eigenvectors = self.normalize_eigenvectors(spectralnetEigenvectors)
-
+            
             grassmann = self.get_grassman_distance(normalized_laplacian_eigenvectors, normalized_spectralreduction_eigenvectors)
 
             print("grassmann: "+ str(grassmann))
+
+            # batch_raw, batch_encoded = spectralreduction._spectralnet.get_random_batch()
+            # L_batch = spectralreduction._get_laplacian_of_small_batch(batch_encoded)
+            # V_batch = spectralreduction._predict(batch_raw)
+            # self.eigenvalues = np.diag(V_batch.T @ L_batch @ V_batch)
             
-            batch_raw, batch_encoded = spectralreduction._spectralnet.get_random_batch()
-            L_batch = spectralreduction._get_laplacian_of_small_batch(batch_encoded)
-            V_batch = spectralreduction._predict(batch_raw)
-            self.eigenvalues = np.diag(V_batch.T @ L_batch @ V_batch)
-            self.eigenvectors = normalized_spectralreduction_eigenvectors
-            # similarity = self.cosine_similarity(laplacian_eigenxvalues, self.eigenvalues)
-            # angle = np.arccos(similarity)
-            # print(f"angle: {angle}")
+            self.eigenvectors = normalized_laplacian_eigenvectors
+            self.eigenvalues = laplacian_eigenxvalues
 
             if verbose:
                 print(f"\tDone in {time.time()-start_time:.2f} s")
@@ -417,18 +429,11 @@ class TriMesh:
         """
         # Compute the norms of each eigenvector
         norms = np.linalg.norm(eigenvectors, axis=0)
-        
-        # Ensure norms are not zero to avoid division by zero
-        nonzero_norms = np.where(norms != 0)
-        
-        # Normalize eigenvectors by dividing by norms
-        normalized_eigenvectors = np.divide(eigenvectors, norms, where=nonzero_norms)
-        
+        normalized_eigenvectors = eigenvectors/norms
         return normalized_eigenvectors
-        return np.array([v / np.linalg.norm(v) for v in eigenvectors.T]).T
 
 
-    def process(self, k=200, skip_normals=True, intrinsic=False, robust=False, verbose=False):
+    def process(self, k=200, skip_normals=True, intrinsic=False, robust=False, verbose=False, is_point_cloud=True):
         """
         Process the LB spectrum and saves it.
         Additionnaly computes per-face normals
@@ -452,7 +457,7 @@ class TriMesh:
             if self.facelist is None:
                 robust = True
             self.laplacian_spectrum(k, return_spectrum=False, intrinsic=intrinsic, robust=robust,
-                                    verbose=verbose)
+                                    verbose=verbose,is_point_cloud=is_point_cloud)
 
         return self
 
@@ -1078,7 +1083,7 @@ class TriMesh:
         float
             The Grassmann distance.
         """
-
+        
         M = np.dot(np.transpose(A), B)
         _, s, _ = np.linalg.svd(M, full_matrices=False)
         s = 1 - np.square(s)

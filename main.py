@@ -29,7 +29,7 @@ process_params = {
     'k_process': 10
 }
 model = FunctionalMapping(mesh1,mesh2)
-model.preprocess(**process_params,verbose=True)
+model.preprocess(**process_params,verbose=True, is_point_cloud=False)
 fit_params = {
     'w_descr': 1e-1,
     'w_lap': 1e-2,
