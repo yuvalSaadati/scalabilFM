@@ -79,7 +79,7 @@ class MatData():
                 self.true_evals = evals[:num_evals]
         else:
             if evals is None:
-                self.true_evals = la.eigvals(self.Wmat(),
+                self.true_evals = la.eigvalsh(self.Wmat(),
                             np.diag(self.D.squeeze()),
                             subset_by_index=(self.n-num_evals, self.n-1))
             else:
