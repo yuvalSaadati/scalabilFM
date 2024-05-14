@@ -15,6 +15,15 @@ import torch
 import sys
 import sys
 from .spectralnet._reduction import SpectralReduction
+from .spectralnet2.SpectralNetworks import *
+from torch import optim
+from .spectralnet2 import GradFuncs
+from .spectralnet2.Training import *
+from .spectralnet2.LossFuncs import *
+from .spectralnet2 import ConvertFuncs
+import scipy.sparse as sparse
+import scipy.sparse.linalg
+from sklearn.preprocessing import MinMaxScaler
 
 class TriMesh:
     """
@@ -343,6 +352,20 @@ class TriMesh:
         -------------------------
         eigenvalues, eigenvectors : (k,), (n,k) - Only if return_spectrum is True.
         """
+        vertices = torch.tensor(self.vertlist).float()
+        # Step 1: Compute the centroid
+        centroid = torch.mean(vertices, axis=0)
+
+        # Step 2: Translate the mesh to the origin
+        translated_vertices = vertices - centroid
+
+        # Step 3: Compute the scaling factor
+        max_dist = torch.max(torch.sqrt(torch.sum(translated_vertices**2, axis=1)))
+
+        # Step 4: Scale the mesh to fit within the unit sphere
+        normalized_vertices = translated_vertices / max_dist
+        # normalized_vertices = (vertices - vertices.mean(axis=0)) / vertices.std(axis=0)
+        self.vertlist = normalized_vertices.detach().numpy()
         if self.facelist is None:
             robust = True
 
@@ -359,64 +382,71 @@ class TriMesh:
                 self.W, self.A = robust_laplacian.point_cloud_laplacian(self.vertlist, mollify_factor=mollify_factor)
 
         else:
-            self.W = laplacian.cotangent_weights(self.vertlist, self.facelist)
-            self.A = laplacian.dia_area_mat(self.vertlist, self.facelist)
-
-        # If k is 0, stop here
-        if k > 0:
-            if verbose:
-                print(f"Computing {k} eigenvectors")
-                start_time = time.time()          
-            x = torch.tensor(self.vertlist)
-            x = x.float()
-
-            spectralreduction = SpectralReduction(
-                n_components=k,
-                should_use_ae=False,
-                should_use_siamese=False,
-                spectral_epochs=3,
-                spectral_lr=1e-2,
-                spectral_hiddens=[256,256, k],
-            )
-            # A_ = np.diag(1.0/np.diag(self.A.toarray()))
-            # W_= self.W.toarray()
-            # S = scipy.sparse.coo_matrix(A_*W_)
-            # laplacian_eigenxvalues, laplacian_eigenvectors = laplacian.laplacian_spectrum(S, None, spectrum_size=15)
-
-            # 1: using w with adding padding to y 
-            # spectralnetEigenvectors = spectralreduction.fit_transform(x, None, self.W)
-            #spectralnetEigenvectors = spectralreduction.fit_transform(x, None, torch.tensor(self.facelist), is_point_cloud)
-            #spectralnetEigenvectors = spectralreduction.fit_transform(torch.from_numpy(self.W.toarray()).to(torch.float32), None, torch.tensor(self.facelist), is_point_cloud)
-            # spectralnetEigenvectors = spectralreduction.fit_transform(x, None, torch.tensor(self.facelist), is_point_cloud)
-            #spectralnetEigenvectors = spectralreduction.fit_transform(x , None, torch.tensor(self.facelist), is_point_cloud, torch.from_numpy(self.W.toarray()).to(torch.float32),  torch.from_numpy(self.A.toarray()).to(torch.float32))
-            laplacian_eigenxvalues, laplacian_eigenvectors = laplacian.laplacian_spectrum(self.W, self.A, spectrum_size=k)
-            print(f'eigenvalues sum : {laplacian_eigenxvalues.sum()}')
-
-            spectralnetEigenvectors = spectralreduction.fit_transform(x , None, None, is_point_cloud, torch.from_numpy(self.W.toarray()).to(torch.float32),  torch.from_numpy(self.A.toarray()).to(torch.float32))
-            print(spectralnetEigenvectors.T @ spectralnetEigenvectors)
-
-
-            normalized_laplacian_eigenvectors= self.normalize_eigenvectors(laplacian_eigenvectors)
-            normalized_spectralreduction_eigenvectors = self.normalize_eigenvectors(spectralnetEigenvectors)
+        #    # Create the heatmap of the sparse matrix
+        #     plt.imshow(self.W1.toarray(), cmap='viridis', interpolation='nearest')
+        #     plt.colorbar()  # Add color bar to show values
+        #     plt.savefig('sparse_matrix_heatmap.png', dpi=300)  # Save as PNG with 300 DPI resolution
+        #     plt.clf()
+            self.W = laplacian.cotangent_weights(normalized_vertices, self.facelist)
+            self.A = laplacian.dia_area_mat(normalized_vertices, self.facelist)
+            # L = scipy.sparse.linalg.inv(self.A) @ self.W
+            # loaded_y = np.load('y.npy')
+            # L_diag =np.diag(loaded_y.T@L.toarray()@loaded_y)
             
-            grassmann = self.get_grassman_distance(normalized_laplacian_eigenvectors, normalized_spectralreduction_eigenvectors)
-
-            print("grassmann: "+ str(grassmann))
-
-            # batch_raw, batch_encoded = spectralreduction._spectralnet.get_random_batch()
-            # L_batch = spectralreduction._get_laplacian_of_small_batch(batch_encoded)
-            # V_batch = spectralreduction._predict(batch_raw)
-            # self.eigenvalues = np.diag(V_batch.T @ L_batch @ V_batch)
+            # plt.imshow(self.W.toarray(), cmap='coolwarm', interpolation='nearest', vmin=-1, vmax=1)
+            # plt.colorbar(label='Value')  # Add color bar with label
+            # plt.savefig("cotangent_weights.png", dpi=300)  # Save as PNG with 300 DPI resolution
+            # plt.clf()
             
-            self.eigenvectors = normalized_laplacian_eigenvectors
-            self.eigenvalues = laplacian_eigenxvalues
+            # plt.imshow(self.A.toarray(), cmap='coolwarm', interpolation='nearest', vmin=self.A.toarray().min(), vmax=self.A.toarray().max())
+            # plt.colorbar(label='Value')  # Add color bar to show values
+            # plt.savefig('A.png', dpi=300)  # Save as PNG with 300 DPI resolution
+            # plt.clf()
+            # scaler = MinMaxScaler(feature_range=(0, 1))
+            # self.vertlist = scaler.fit_transform(self.vertlist)
+            # self.vertlist *=100
+            # plt.imshow(self.A.toarray(), cmap='coolwarm', interpolation='nearest', vmin=self.A.toarray().min(), vmax=self.A.toarray().max())
+            # plt.colorbar()  # Add color bar to show values
+            # plt.savefig('A after multiple by 100.png', dpi=300)  # Save as PNG with 300 DPI resolution
+            # plt.clf()
+        
+        spectralreduction = SpectralReduction(
+            return_eigenvalues=True,
+            n_components=k,
+            spectral_epochs=200,
+            spectral_lr=1e-2,
+            spectral_min_lr=1e-6,
+            spectral_batch_size=self.W.shape[0],
+            spectral_hiddens=[256,256, k],
+        )
+        A = torch.tensor(self.A.toarray(), dtype=torch.float32)
+        cotangent_weights = torch.tensor(self.W.toarray(), dtype=torch.float32)
 
-            if verbose:
-                print(f"\tDone in {time.time()-start_time:.2f} s")
+        laplacian_eigenxvalues, laplacian_eigenvectors = laplacian.laplacian_spectrum(self.W, self.A, spectrum_size=k)
+        print("Functional map eigenvalues:")
+        print(laplacian_eigenxvalues)
 
-            if return_spectrum:
-                return self.eigenvalues, self.eigenvectors
-            
+        print("Functional map eigenvalues sum: "+ str(laplacian_eigenxvalues.sum()))
+        # vertices = (vertices - vertices.mean(axis=0)) / vertices.std(axis=0)
+        spectralnetEigenvectors, spectralnetEigenvalues = spectralreduction.fit_transform(normalized_vertices, None,self.W,  self.A)  
+        # spectralnetEigenvectors = spectralnetEigenvectors/np.sqrt(vertices.shape[0]) 
+        print("Spectral net  eigenvalues: ")
+        print(spectralnetEigenvalues)
+
+        print("Spectral net eigenvalues sum: "+ str(spectralnetEigenvalues.sum()))
+
+        # print(spectralnetEigenvectors.T@spectralnetEigenvectors)     
+        # normalized_laplacian_eigenvectors= self.normalize_eigenvectors(laplacian_eigenvectors)
+        normalized_spectralreduction_eigenvectors = self.normalize_eigenvectors(spectralnetEigenvectors)
+        grassmann = self.get_grassman_distance(laplacian_eigenvectors, normalized_spectralreduction_eigenvectors)
+        print("grassmann: "+ str(grassmann))
+
+        self.eigenvalues = spectralnetEigenvalues
+        self.eigenvectors = normalized_spectralreduction_eigenvectors
+        if return_spectrum:
+            return self.eigenvalues, self.eigenvectors
+
+      
     def normalize_eigenvectors(self, eigenvectors):
         """
         Normalize a set of eigenvectors.
@@ -428,6 +458,7 @@ class TriMesh:
         numpy.ndarray: Normalized eigenvectors.
         """
         # Compute the norms of each eigenvector
+    
         norms = np.linalg.norm(eigenvectors, axis=0)
         normalized_eigenvectors = eigenvectors/norms
         return normalized_eigenvectors
@@ -998,7 +1029,6 @@ class TriMesh:
             self.vertlist, self.facelist = file_utils.read_mat(meshpath)
         else:
             raise ValueError('Provide file in .off or .obj format')
-
         self.path = meshpath
         self.meshname = os.path.splitext(os.path.basename(meshpath))[0]
 
@@ -1083,7 +1113,8 @@ class TriMesh:
         float
             The Grassmann distance.
         """
-        
+        A, _ = np.linalg.qr(A)
+        B, _ = np.linalg.qr(B)
         M = np.dot(np.transpose(A), B)
         _, s, _ = np.linalg.svd(M, full_matrices=False)
         s = 1 - np.square(s)

@@ -1,14 +1,17 @@
 import torch
 import torch.nn as nn
-
-
+import scipy.sparse as sparse
+import numpy as np
+import math
+import scipy.sparse.linalg
 class SpectralNetLoss(nn.Module):
     def __init__(self):
         super(SpectralNetLoss, self).__init__()
+        self.index = 0
 
     def forward(
         self, W: torch.Tensor, Y: torch.Tensor, is_normalized: bool = False, cotangent_weights: torch.Tensor =None, 
-        is_point_cloud = True, A: torch.Tensor =None
+         A: torch.Tensor =None
     ) -> torch.Tensor:
         """
         This function computes the loss of the SpectralNet model.
@@ -22,28 +25,78 @@ class SpectralNetLoss(nn.Module):
 
         Returns:
             torch.Tensor: The loss
-        """
-        m = Y.size(0)
+    """
 
-        # # Compute pairwise distances using Y
-        # Dy = torch.cdist(Y, Y)
+        numerator = Y.T @ cotangent_weights @ Y
+        denominator = Y.T @ A @ Y
 
-        # # Weight the pairwise distances by cotangent weights
-        # weighted_Dy = Dy.pow(2) *  cotangent_weights * A
+        # Ensure denominator stability
+        denominator = torch.where(denominator.abs() < 1e-8, torch.ones_like(denominator) * 1e-8, denominator)
 
-        # # Compute the loss using the weighted distances
-        # loss = torch.sum(W * weighted_Dy) / (2 * m)
-        L =  torch.inverse(A) @ cotangent_weights
-        loss= torch.trace(Y.T@L@Y)/ (2 * m)
+        L = numerator / denominator
+
+        # Sum of the diagonal (first k eigenvalues for k dimensions of Y)
+        L_diag = torch.diag(L)
+        loss = torch.sum(L_diag)
+
+        tensor_string = np.array2string(L_diag.detach().numpy(), separator=', ')
+
+        with open("Y.txt", 'a') as file:
+            file.write(f"Y epoch {self.index}:\n{tensor_string}\n\n")
+            self.index +=1
         return loss
-        #return  torch.trace(Y.T@cotangent_weights@Y)
-        # m = Y.size(0)
-        # if is_normalized:
-        #     D = torch.sum(W, dim=1)
-        #     Y = Y / torch.sqrt(D)[:, None]
+        # print(f'Y norm min: {torch.norm(Y, dim=0).min()}, Y norm max: {torch.norm(Y, dim=0).max()}')
+        # L = (Y.T @cotangent_weights @ Y)/(Y.T @A @ Y)
+        # L_diag = torch.diag(L)
+        # loss = torch.sum(L_diag)
+        # return loss
+        #L = torch.linalg.inv(torch.sqrt(A)) @ cotangent_weights @ torch.linalg.inv(torch.sqrt(A))
+        # Create a diagonal matrix with the same shape and add 0.01 to the diagonal elements
+        # diagonal_matrix = torch.zeros(m) + 0.001
+        # diagonal_matrix = torch.diag(diagonal_matrix)
+        #L = scipy.sparse.linalg.inv(A) @ cotangent_weights
+        #L = torch.tensor(L.toarray(), dtype=torch.float32)
+        # eigenvalues1LR, eigenvectors1LR = sparse.linalg.eigs(scipy.sparse.linalg.inv(A)@cotangent_weights, k=2, M=None, which="SR")
+        # eigenvalues1, eigenvectors1 = sparse.linalg.eigs(scipy.sparse.linalg.inv(A)@cotangent_weights, k=10, M=None,sigma=-0.01)
+        # eigenvalues2, eigenvectors2 = sparse.linalg.eigs(cotangent_weights, k=10, M=A,sigma=-0.01)
 
+        # cotangent_weights = torch.tril(cotangent_weights) + torch.tril(cotangent_weights, diagonal=0).t()
+        # cotangent_weights = torch.abs(0.5*(cotangent_weights + cotangent_weights.T))
+
+
+        #L = torch.tensor(cotangent_weights.toarray(), dtype=torch.float32)- 0.01*torch.tensor(A.toarray(), dtype=torch.float32)
+        #P = torch.linalg.inv(torch.diag(torch.sqrt(torch.diag(L)))) 
+        # define preconditioner
+        # P = torch.diag(torch.diag(L))    
+      
+        # Y = Y / math.sqrt(m)
+       # F = Y.T @ P.T @L @ P @ Y
+        # L_diag = torch.diag(Y.T[:, 1:n] @L[1:n, 1:n] @ Y[1:n, :])
+        # L_diag = torch.diag(Y.T @L @ Y)
+
+
+        # n, m = Y.shape
+        # # result now contains the result of Y^T L Y
+        # print(result)
+        # L_diag = torch.diag(Y.T @L @ Y)
+        # np.savetxt("debug.csv", Y[:, 0:1].detach().numpy(), delimiter=',')
+
+        # print(torch.sum(torch.diag(Y.T  @L @ Y)))
+        # L_=Y.T[0:1, :]@L[:,:]
+        # last_layer=L_.T*Y[:,0:1]
+        # print(last_layer.sum())
+        # std =torch.std(last_layer) 
+        # # return loss
+        # torch.sum(last_layer[last_layer>std]).item()
+        # torch.sum(last_layer[last_layer<std]).item()
+        # print(torch.sum(last_layer[last_layer<std]).item() +torch.sum(last_layer[last_layer>=std]).item())
+        #return  torch.trace(Y.T@cotangent_weights@Y)
+        # if is_normalized:
+        # for i in range(len(Y)):
+        #     Y[i] = Y[i] / A[i, i]
+        
         # Dy = torch.cdist(Y, Y)
-        # loss = torch.sum(W * Dy.pow(2)) / (2 * m)
+        # loss = torch.sum(cotangent_weights * Dy.pow(2)) / (2 * m)
         # if is_point_cloud or cotangent_weights is None:
         #     return loss
         

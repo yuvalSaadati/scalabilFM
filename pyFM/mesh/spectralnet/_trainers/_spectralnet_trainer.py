@@ -8,6 +8,8 @@ from .._utils import *
 from ._trainer import Trainer
 from .._losses import SpectralNetLoss
 from .._models import SpectralNetModel
+import scipy.sparse as sparse
+import json
 
 
 class SpectralTrainer:
@@ -49,7 +51,7 @@ class SpectralTrainer:
         self.is_local_scale = self.spectral_config["is_local_scale"]
 
     def train(
-        self, X: torch.Tensor, y: torch.Tensor, siamese_net: nn.Module = None, FL: nn.Module = None, is_point_cloud=True, cotangent_weights:torch.Tensor = None, A:torch.Tensor = None
+        self, X: torch.Tensor, y: torch.Tensor, siamese_net: nn.Module = None, cotangent_weights = None, A = None
     ) -> SpectralNetModel:
         """
         Train the SpectralNet model.
@@ -84,6 +86,8 @@ class SpectralTrainer:
         self.spectral_net = SpectralNetModel(
             self.architecture, input_dim=self.X.shape[1]
         ).to(self.device)
+        cotangent_weights = torch.tensor(cotangent_weights.toarray(), dtype=torch.float32)
+        A = torch.tensor(A.toarray(), dtype=torch.float32)
 
         self.optimizer = optim.Adam(self.spectral_net.parameters(), lr=self.lr)
 
@@ -110,7 +114,9 @@ class SpectralTrainer:
         #     corresponding_indices = np.arange(batch_indices.shape[0]*3).reshape(batch_indices.shape[0], 3)
         #     faces_indexes.append(corresponding_indices)
         #     vertices_batches.append(vertices_batch)
-        for epoch in t:
+        scheduler = torch.optim.lr_scheduler.StepLR(self.optimizer, step_size=10, gamma=0.5)
+        for epoch in range(self.epochs):
+
             train_loss = 0.0
             #for (X_grad, _), (X_orth, _) in zip(train_loader, ortho_loader):
             #for idx, X_grad in enumerate(vertices_batches):
@@ -132,51 +138,77 @@ class SpectralTrainer:
             # Gradient step
             self.spectral_net.train()
             self.optimizer.zero_grad()
-
             Y = self.spectral_net(X_grad, should_update_orth_weights=False)
+
+
+
+            # normalized_laplacian_eigenvectors= self.normalize_eigenvectors(laplacian_eigenvectors)
+            # normalized_spectralreduction_eigenvectors = self.normalize_eigenvectors(Y.detach().numpy())
+            # grassmann = self.get_grassman_distance(normalized_laplacian_eigenvectors, normalized_spectralreduction_eigenvectors)
+            # print(F'grassmann epoch {epoch}: {grassmann}')
+
+            # Y, _ = np.linalg.qr(Y)
             if self.siamese_net is not None:
                 with torch.no_grad():
                     X_grad = self.siamese_net.forward_once(X_grad)
-            W = self._get_affinity_matrix(X_grad)
-            # total_elements = X_grad.shape[0]/3 * 3
-
-            # # Generate a tensor with increasing numbers
-            # indexes = torch.arange(0, total_elements).int()
-
-            # # Reshape the tensor to the desired shape
-            # indexes = indexes.view(X_grad.shape[0]//3, 3)
             
-            # 1: using w with adding padding to y 
-            #W, Y, is_normalized, cotangent_weights, is_point_cloud, A
-    
-            loss = self.criterion(W, Y,False, cotangent_weights,False, A)
-            #self.W = W_batch_array[idx]
-            #loss = self.criterion(W, Y, False,  W_batch_array[idx],is_point_cloud, A)
+            W= None
+            
+            loss = self.criterion(W, Y,False, cotangent_weights, A)
+
             loss.backward()
             self.optimizer.step()
-            train_loss += loss.item()
-
-            train_loss /= len(train_loader)
-
-            # # Validation step
-            # valid_loss = self.validate(valid_loader)
-            # self.scheduler.step(valid_loss)
+            train_loss = loss.item()
 
             current_lr = self.optimizer.param_groups[0]["lr"]
             if current_lr <= self.spectral_config["min_lr"]:
                 break
-            t.set_description(
-                "Train Loss: {:.7f}, LR: {:.6f}".format(
-                    train_loss, current_lr
-                )
-            )
-            t.refresh()
+            scheduler.step()
+            print(f"Train Loss epoch {epoch}: {train_loss}, LR: {current_lr}")
+            # t.refresh()
+            # print(self.spectral_net.parameters())
             # if epoch == 39:
             #     W = self._get_affinity_matrix(X_grad)
             #     plot_sorted_laplacian(W, Y_grad)    
-        
-            #     Plotting the lis
         return self.spectral_net
+    def get_grassman_distance(self, A: np.ndarray, B: np.ndarray) -> float:
+        """
+        Computes the Grassmann distance between the subspaces spanned by the columns of A and B.
+
+        Parameters
+        ----------
+        A : np.ndarray
+            Numpy ndarray.
+        B : np.ndarray
+            Numpy ndarray.
+
+        Returns
+        -------
+        float
+            The Grassmann distance.
+        """
+        A, _ = np.linalg.qr(A)
+        B, _ = np.linalg.qr(B)
+        M = np.dot(np.transpose(A), B)
+        _, s, _ = np.linalg.svd(M, full_matrices=False)
+        s = 1 - np.square(s)
+        grassmann = np.sum(s)
+        return grassmann
+    
+    def normalize_eigenvectors(self, eigenvectors):
+        """
+        Normalize a set of eigenvectors.
+
+        Parameters:
+        eigenvectors (numpy.ndarray): Array containing eigenvectors as columns.
+
+        Returns:
+        numpy.ndarray: Normalized eigenvectors.
+        """
+        # Compute the norms of each eigenvector
+        norms = np.linalg.norm(eigenvectors, axis=0)
+        normalized_eigenvectors = eigenvectors/norms
+        return normalized_eigenvectors
 
     def validate(self, valid_loader: DataLoader) -> float:
         valid_loss = 0.0
