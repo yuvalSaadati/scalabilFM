@@ -4,7 +4,8 @@ import numpy as np
 from ._utils import *
 from sklearn.cluster import KMeans
 from ._trainers import SpectralTrainer, SiameseTrainer, AETrainer
-
+import scipy.sparse as sparse
+import json
 
 class SpectralNet:
     def __init__(
@@ -150,6 +151,7 @@ class SpectralNet:
         self.spectral_is_local_scale = spectral_is_local_scale
         self.spectral_batch_size = spectral_batch_size
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        self.spectral_trainer = None
 
         self._validate_spectral_hiddens()
 
@@ -161,7 +163,7 @@ class SpectralNet:
                 "The number of units in the last layer of spectral_hiddens network must be equal to the number of clusters or components."
             )
 
-    def fit(self, X: torch.Tensor, y: torch.Tensor = None, FL: torch.Tensor = None, is_point_cloud = True, W_:torch.Tensor = None, A:torch.Tensor = None):
+    def fit(self, X: torch.Tensor, y: torch.Tensor = None, W_ = None, A = None,facelist=None):
         """Performs the main training loop for the SpectralNet model.
 
         Parameters
@@ -225,12 +227,11 @@ class SpectralNet:
         if is_sparse:
             build_ann(X)
 
-        self.spectral_trainer = SpectralTrainer(
-            config=spectral_config, device=self.device, is_sparse=is_sparse
-        )
-        self.spec_net = self.spectral_trainer.train(X, y, self.siamese_net, FL, is_point_cloud, W_, A)
+        if self.spectral_trainer is None:
+            self.spectral_trainer = SpectralTrainer(config=spectral_config, device=self.device, is_sparse=is_sparse)
+        self.spec_net = self.spectral_trainer.train(X, y, self.siamese_net, W_, A,facelist)
 
-    def predict(self, X: torch.Tensor) -> np.ndarray:
+    def predict(self, X: torch.Tensor, W=None, A=None) -> np.ndarray:
         """Predicts the cluster assignments for the given data.
 
         Parameters
@@ -243,18 +244,12 @@ class SpectralNet:
         np.ndarray
             The cluster assignments for the given data.
         """
-        X = X.view(X.size(0), -1)
-        X = X.to(self.device)
-
-        with torch.no_grad():
-            if self.should_use_ae:
-                X = self.ae_net.encode(X)
-            self.embeddings_ = self.spec_net(X, should_update_orth_weights=False)
-            self.embeddings_ = self.embeddings_.detach().cpu().numpy()
-
+        # self.spec_net.train()
+        self.embeddings_ = self.spec_net(X, should_update_orth_weights=False)
+        self.embeddings_ = self.embeddings_.detach().cpu().numpy()
         cluster_assignments = self._get_clusters_by_kmeans(self.embeddings_)
         return cluster_assignments
-
+    
     def get_random_batch(self, batch_size: int = 1024) -> tuple:
         """Get a batch of the input data.
 

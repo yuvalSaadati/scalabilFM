@@ -10,6 +10,7 @@ import pyFM.signatures as sg
 import pyFM.optimize as opt_func
 import pyFM.refine
 import pyFM.spectral as spectral
+from .mesh.spectralnet._reduction import SpectralReduction
 
 
 class FunctionalMapping:
@@ -210,12 +211,23 @@ class FunctionalMapping:
             k_process = 200
 
         use_lm = landmarks is not None and len(landmarks) > 0
-
+        
         # Compute the Laplacian spectrum
         if verbose:
             print('\nComputing Laplacian spectrum')
-        self.mesh1.process(max(self.k1, k_process), verbose=verbose, is_point_cloud=is_point_cloud, intrinsic=intrinsic)
-        self.mesh2.process(max(self.k2, k_process), verbose=verbose, is_point_cloud=is_point_cloud, intrinsic=intrinsic)
+        # spectralreduction = SpectralReduction(
+        #         return_eigenvalues=True,
+        #         n_components=k_process,
+        #         spectral_epochs=200,
+        #         spectral_lr=1e-2,
+        #         spectral_min_lr=1e-6,
+        #         spectral_batch_size=self.W.shape[0],
+        #         spectral_hiddens=[128, 128, 128, k_process],
+        #     )
+        # spectralreduction._fit(X, y, W, A)
+
+        spectralreduction = self.mesh1.process(max(self.k1, k_process), verbose=verbose, is_point_cloud=is_point_cloud, intrinsic=intrinsic)
+        self.mesh2.process(max(self.k2, k_process), verbose=verbose, is_point_cloud=is_point_cloud, intrinsic=intrinsic, spectralreduction=spectralreduction)
 
         if verbose:
             print('\nComputing descriptors')

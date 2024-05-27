@@ -79,7 +79,5 @@ class SpectralNetModel(nn.Module):
         Y_tilde = x
         if should_update_orth_weights:
             self.orthonorm_weights = self._make_orthonorm_weights(Y_tilde)
-
         Y = Y_tilde @ self.orthonorm_weights
-        print(Y.T @ Y)
         return Y

@@ -21,12 +21,14 @@ def visu(vertices):
 
 mesh1 = TriMesh('data/cat-00.off', area_normalize=True, center=False)
 mesh2 = TriMesh('data/lion-00.off')
+# mesh1 = TriMesh(np.load('data/lion-00_1e5.npy'))
+# mesh2 = TriMesh(np.load('data/cat-00_1e5.npy'))
 process_params = {
-    'n_ev': (10,10),  # Number of eigenvalues on source and Target
+    'n_ev': (20,20),  # Number of eigenvalues on source and Target
     'landmarks': np.loadtxt('data/landmarks.txt',dtype=int)[:5],  # loading 5 landmarks
     'subsample_step': 4,  # In order not to use too many descriptors
     'descr_type': 'WKS',  # WKS or HKS
-    'k_process': 10
+    'k_process': 20
 }
 model = FunctionalMapping(mesh1,mesh2)
 model.preprocess(**process_params,verbose=True, is_point_cloud=False)

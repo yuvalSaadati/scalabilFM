@@ -6,7 +6,6 @@ from sklearn.metrics import accuracy_score
 from itertools import permutations
 from .Datasets import *
 from .GradFuncs import update_YDY
-import matplotlib.pyplot as plt
 import scipy.io
 import time
 
@@ -83,7 +82,6 @@ def train(model, optimizer, matdata, paras,
         #     #     test_predict = kmeans3.predict(testU)
         #     #     losses_hist2[0].append( mnist_error(test_predict, Tlabel.reshape(-1),5) )
         #     #     losses_hist3[0].append( mnist_error(kmeans3.labels_, label.reshape(-1),5) )
-        # elif convertfunc.__name__ == 'iterator_convert_specnet1':
         #     U, evals, evecs = convertfunc(Y, matdata)
         #     #testU = np.matmul(testY,evecs)
         #     if not flag:
@@ -106,7 +104,7 @@ def train(model, optimizer, matdata, paras,
         
 
         print('====> Epoch: {:6d} Trace loss: {:8e},    {:8e}'.format(
-            it_epoch, losses_hist1[0][it_epoch],losses_hist1[1][it_epoch]))
+            it_epoch, losses_hist1[0][it_epoch],losses_hist1[0][it_epoch]))
         if losses_hist1[0][it_epoch] < paras['tolerance']:
             break
     return losses_hist1

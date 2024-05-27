@@ -10,6 +10,7 @@ from .._losses import SpectralNetLoss
 from .._models import SpectralNetModel
 import scipy.sparse as sparse
 import json
+from ....mesh import laplacian
 
 
 class SpectralTrainer:
@@ -49,9 +50,61 @@ class SpectralTrainer:
         self.architecture = self.spectral_config["hiddens"]
         self.batch_size = self.spectral_config["batch_size"]
         self.is_local_scale = self.spectral_config["is_local_scale"]
+        self.spectral_net = None
+        
 
+    # Function to apply geometric transformations for augmentation using PyTorch
+    def augment_mesh(self, vertices):
+        # Ensure vertices is a PyTorch tensor
+        if isinstance(vertices, np.ndarray):
+            vertices = torch.tensor(vertices, dtype=torch.float32)
+        
+        # Rotation around the z-axis
+        angle = torch.rand(1) * 2 * np.pi 
+        rotation_matrix = torch.tensor([[torch.cos(angle), -torch.sin(angle), 0],
+                                        [torch.sin(angle), torch.cos(angle), 0],
+                                        [0, 0, 1]])
+        
+        # Apply rotation
+        vertices_rotated = torch.mm(vertices, rotation_matrix)
+        
+        # Uniform scaling
+        scale = torch.tensor(1.0) + (torch.rand(1) - 0.5) * 0.2  # Scale factor between 0.9 and 1.1
+        vertices_scaled = vertices_rotated * scale
+        
+        # Translation
+        translation = (torch.rand(3) - 0.5) * 0.2  # Translation vector between -0.1 and 0.1 for each axis
+        vertices_translated = vertices_scaled + translation
+        return vertices_translated
+    def filter_and_reindex_faces(self, faces, batch_indices):
+        batch_indices_np = np.array(batch_indices, dtype=int)
+
+        # Create a mask to filter faces where all vertices are in the batch
+        mask = np.isin(faces, batch_indices_np).all(axis=1)
+        filtered_faces = faces[mask]
+
+        # Prepare the new indices map
+        new_indices_map = np.full(np.max(batch_indices_np) + 1, -1, dtype=int)  # Initialize with -1 for non-existent indices
+        new_indices_map[batch_indices_np] = np.arange(len(batch_indices_np))
+
+        # Re-index faces: Apply new_indices_map to every vertex in the filtered faces
+        if filtered_faces.size > 0:  # Ensure there are faces to process
+            reindexed_faces = new_indices_map[filtered_faces]
+        else:
+            reindexed_faces = np.array([])  # Handle the case where no faces are left after filtering
+
+        return reindexed_faces
+    
+    def create_mini_batches(self, vertices, batch_size):
+        mini_batches = []
+        vertex_indices = np.arange(vertices.shape[0])
+        for i in range(0, len(vertex_indices), batch_size):
+            batch_indices = vertex_indices[i:i + batch_size]
+            mini_batches.append((vertices[batch_indices], batch_indices))
+        return mini_batches
+    
     def train(
-        self, X: torch.Tensor, y: torch.Tensor, siamese_net: nn.Module = None, cotangent_weights = None, A = None
+        self, X: torch.Tensor, y: torch.Tensor, siamese_net: nn.Module = None, cotangent_weights = None, A = None,facelist=None
     ) -> SpectralNetModel:
         """
         Train the SpectralNet model.
@@ -77,28 +130,25 @@ class SpectralTrainer:
         The siamese network (`siamese_net`) is an optional parameter used for computing the affinity matrix.
         The trained SpectralNet model is returned as the output.
         """
-
+        # X = self.augment_mesh(X)
         self.X = X.view(X.size(0), -1)
         self.y = y
         self.counter = 0
         self.siamese_net = siamese_net
-        self.criterion = SpectralNetLoss()
-        self.spectral_net = SpectralNetModel(
-            self.architecture, input_dim=self.X.shape[1]
-        ).to(self.device)
-        cotangent_weights = torch.tensor(cotangent_weights.toarray(), dtype=torch.float32)
-        A = torch.tensor(A.toarray(), dtype=torch.float32)
+        if self.spectral_net is None:
+            self.spectral_net = SpectralNetModel(
+                self.architecture, input_dim=self.X.shape[1]
+            ).to(self.device)
+        
+            self.optimizer = optim.Adam(self.spectral_net.parameters(), lr=self.lr)
 
-        self.optimizer = optim.Adam(self.spectral_net.parameters(), lr=self.lr)
+            self.scheduler = optim.lr_scheduler.ReduceLROnPlateau(
+                self.optimizer, mode="min", factor=self.lr_decay, patience=self.patience
+            )
+            self.criterion = SpectralNetLoss()
 
-        self.scheduler = optim.lr_scheduler.ReduceLROnPlateau(
-            self.optimizer, mode="min", factor=self.lr_decay, patience=self.patience
-        )
-
-        train_loader, ortho_loader, valid_loader = self._get_data_loader()
 
         print("Training SpectralNet:")
-        t = trange(self.epochs, leave=True)
         
         ##2: building vertices batches accoring to faces, and calculate w in 1024 batch size
         # FL_loader = torch.chunk(FL, chunks=len(train_loader), dim=0)
@@ -114,12 +164,13 @@ class SpectralTrainer:
         #     corresponding_indices = np.arange(batch_indices.shape[0]*3).reshape(batch_indices.shape[0], 3)
         #     faces_indexes.append(corresponding_indices)
         #     vertices_batches.append(vertices_batch)
-        scheduler = torch.optim.lr_scheduler.StepLR(self.optimizer, step_size=10, gamma=0.5)
-        for epoch in range(self.epochs):
+        t = trange(self.epochs, leave=True)
+        scheduler = torch.optim.lr_scheduler.StepLR(self.optimizer, step_size=50, gamma=0.5)
+        for epoch in t:
 
             train_loss = 0.0
-            #for (X_grad, _), (X_orth, _) in zip(train_loader, ortho_loader):
-            #for idx, X_grad in enumerate(vertices_batches):
+            batch_size = 32
+            #for batch_indices in self.create_mini_batches(self.X, batch_size):
             X_orth = self.X
             X_grad = self.X
             X_grad = X_grad.to(device=self.device)
@@ -140,21 +191,12 @@ class SpectralTrainer:
             self.optimizer.zero_grad()
             Y = self.spectral_net(X_grad, should_update_orth_weights=False)
 
-
-
-            # normalized_laplacian_eigenvectors= self.normalize_eigenvectors(laplacian_eigenvectors)
-            # normalized_spectralreduction_eigenvectors = self.normalize_eigenvectors(Y.detach().numpy())
-            # grassmann = self.get_grassman_distance(normalized_laplacian_eigenvectors, normalized_spectralreduction_eigenvectors)
-            # print(F'grassmann epoch {epoch}: {grassmann}')
-
-            # Y, _ = np.linalg.qr(Y)
             if self.siamese_net is not None:
                 with torch.no_grad():
                     X_grad = self.siamese_net.forward_once(X_grad)
-            
-            W= None
-            
-            loss = self.criterion(W, Y,False, cotangent_weights, A)
+        
+
+            loss = self.criterion(Y,False, cotangent_weights, A)
 
             loss.backward()
             self.optimizer.step()
@@ -164,8 +206,9 @@ class SpectralTrainer:
             if current_lr <= self.spectral_config["min_lr"]:
                 break
             scheduler.step()
+            torch.nn.utils.clip_grad_norm_(self.spectral_net.parameters(), max_norm=1.0)
             print(f"Train Loss epoch {epoch}: {train_loss}, LR: {current_lr}")
-            # t.refresh()
+            t.refresh()
             # print(self.spectral_net.parameters())
             # if epoch == 39:
             #     W = self._get_affinity_matrix(X_grad)

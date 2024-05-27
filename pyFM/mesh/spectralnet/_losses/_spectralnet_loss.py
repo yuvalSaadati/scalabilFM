@@ -8,10 +8,10 @@ class SpectralNetLoss(nn.Module):
     def __init__(self):
         super(SpectralNetLoss, self).__init__()
         self.index = 0
-
+    
     def forward(
-        self, W: torch.Tensor, Y: torch.Tensor, is_normalized: bool = False, cotangent_weights: torch.Tensor =None, 
-         A: torch.Tensor =None
+        self, Y: torch.Tensor, is_normalized: bool = False, cotangent_weights=None, 
+         A =None
     ) -> torch.Tensor:
         """
         This function computes the loss of the SpectralNet model.
@@ -26,24 +26,22 @@ class SpectralNetLoss(nn.Module):
         Returns:
             torch.Tensor: The loss
     """
-
+        n, m = Y.shape
+        # eigenvalues, eigenvectors = sparse.linalg.eigsh(cotangent_weights, k=m, M=A, sigma=-0.01)
+       
+        cotangent_weights = torch.tensor(cotangent_weights.toarray(), dtype=torch.float32)
+        A = torch.tensor(A.toarray(), dtype=torch.float32)
         numerator = Y.T @ cotangent_weights @ Y
         denominator = Y.T @ A @ Y
-
         # Ensure denominator stability
         denominator = torch.where(denominator.abs() < 1e-8, torch.ones_like(denominator) * 1e-8, denominator)
 
         L = numerator / denominator
+        # Compute loss as the difference between predicted and target eigenvalues
+        # loss = torch.sum((L - torch.tensor(eigenvalues, dtype=torch.float32) )** 2)
 
-        # Sum of the diagonal (first k eigenvalues for k dimensions of Y)
         L_diag = torch.diag(L)
         loss = torch.sum(L_diag)
-
-        tensor_string = np.array2string(L_diag.detach().numpy(), separator=', ')
-
-        with open("Y.txt", 'a') as file:
-            file.write(f"Y epoch {self.index}:\n{tensor_string}\n\n")
-            self.index +=1
         return loss
         # print(f'Y norm min: {torch.norm(Y, dim=0).min()}, Y norm max: {torch.norm(Y, dim=0).max()}')
         # L = (Y.T @cotangent_weights @ Y)/(Y.T @A @ Y)

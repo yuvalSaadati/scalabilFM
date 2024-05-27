@@ -1,6 +1,7 @@
 import numpy as np
 import scipy.linalg as la
 import torch
+import scipy.sparse as sparse
 
 class MatData():
     def __init__(self, Xdata, kernel_func=None, mat=None,
@@ -9,7 +10,6 @@ class MatData():
         #   matrix entries, truncation should be embedded in the function
         # MAT is a dense matrix, numpy ndarray
         # SPARSE_MAT is a sparse matrix, scipy.sparse.csr_matrix
-
         self.X   = torch.tensor(Xdata, dtype = torch.get_default_dtype())
         self.n   = Xdata.shape[0]
         self.dim = Xdata.shape[1]
@@ -68,24 +68,29 @@ class MatData():
             for it in range(self.n):
                 tmp.append(sum(self.sp_val[it]))
             self.D = torch.tensor(tmp, dtype = torch.get_default_dtype())
-        self.D = torch.unsqueeze(self.D, -1)
-        #self.D = torch.tensor(A.toarray(), dtype = torch.get_default_dtype())
+        self.D = A
+        self.W = sparse_mat
         # Compute True Eigenvalues
         if not self.sparse_flag:
             if evals is None:
-                self.true_evals = la.eigvalsh(self.W, self.D,
+                self.true_evals = la.eigvalsh(self.W, np.diag(self.D.squeeze()),
                             subset_by_index=(self.n-num_evals, self.n-1))
             else:
                 self.true_evals = evals[:num_evals]
         else:
             if evals is None:
-                self.true_evals = la.eigvalsh(self.Wmat(),
-                            np.diag(self.D.squeeze()),
-                            subset_by_index=(self.n-num_evals, self.n-1))
+                # self.true_evals = la.eigvalsh(self.Wmat(),
+                #             np.diag(self.D.squeeze()),
+                #             subset_by_index=(self.n-num_evals, self.n-1))
+                self.true_evals, _ = sparse.linalg.eigsh(self.W, k=num_evals, M=self.D,sigma=-0.01)
+                
             else:
                 self.true_evals = evals[:num_evals]
-        
-        self.Dt = self.D/torch.matmul(torch.sqrt(self.D.t()),torch.sqrt(self.D))
+        self.D = torch.tensor(np.diag(self.D.toarray()), dtype = torch.get_default_dtype())
+        self.D = torch.unsqueeze(self.D, -1)
+        self.W = torch.tensor(sparse_mat.toarray(), dtype = torch.get_default_dtype())
+
+        self.Dt = self.D/torch.matmul(torch.sqrt(self.D.T),torch.sqrt(self.D))
 
 
     def Xdata(self, idx = None):

@@ -1,5 +1,6 @@
 import numpy as np
 import scipy.linalg as la
+import scipy.sparse as sparse
 
 def iterator_convert_specnet1(Y, matdata): 
 
@@ -8,7 +9,6 @@ def iterator_convert_specnet1(Y, matdata):
     Y = np.double(Y.numpy())
     WY = np.matmul(W, Y)
     DY = np.multiply(D, Y)
-
     YWY = np.matmul(Y.T, WY)
     YDY = np.matmul(Y.T, DY)
     # YWY = (YWY + YWY.T)/2
@@ -36,11 +36,11 @@ def iterator_convert_specnet2(Y, matdata):
     Y = np.double(Y.numpy())
     WY = np.matmul(W, Y)
     DY = np.multiply(D, Y)
-
     YWY = np.matmul(Y.T, WY)
     YDY = np.matmul(Y.T, DY)
     # YWY = (YWY + YWY.T)/2
     # YDY = (YDY + YDY.T)/2 
+    #evals, evecs = sparse.linalg.eigsh(sparse.coo_matrix(YWY), k=7, M=sparse.coo_matrix(YDY),sigma=-0.01)
     evals, evecs = la.eigh(YWY, YDY, driver = 'gv')
     sorted_indices = np.argsort(evals)[::-1]
     evals = evals[sorted_indices]
